@@ -1,12 +1,23 @@
 #lang racket
 ;; test: https://browser.engineering/http.html
+;; test: https://browser.engineering/examples/example3-sizes.html
 (require racket/gui net/http-easy threading)
+
+;;- Browser State --------------------------------------------------------------
 
 (define *width* (make-parameter 1000))
 (define *height* (make-parameter 1000))
 (define *scroll* (make-parameter 0))
 (define *url* (make-parameter #f))
+(define *buffer* (make-parameter '()))
+
+;;- Constant -------------------------------------------------------------------
+
 (define SCROLL-STEP 100)
+(define HSTEP 20)
+(define VSTEP 20)
+
+;;- Browser Window -------------------------------------------------------------
 
 (define browser-frame%
   (class frame%
@@ -49,44 +60,42 @@
 
 (define dc (send web-page get-dc))
 
-(define HSTEP 20)
-(define VSTEP 20)
+;;- Layout Functions -----------------------------------------------------------
 
-(define *display-list* (make-parameter '()))
-(define *buffer* (make-parameter '()))
+;; LineToken{x, token, font}
+;; Token{x, y, word, font}
+;; Line = Listof[LineToken]
+;; DrawBuffer = Listof[Token]
 
+;; flush : Line * DrawBuffer * Number * DrawingCtxt -> DrawBuffer * Number
+;; flushes a full line buffer, calculates the the y coordinate of each token
 (define (flush line buf y dc)
-  (cond [(empty? line)
-      (list y buf)]
-      [else 
-  #;(for ([think (in-list (reverse line))])
-    (printf "~a " (second think)))
-  ;;(printf "\n~a\n" y)
-  (define descents
-    (for/list ([thing (in-list line)])
-      (match-define (list x w f) thing)
-      (get-font-descent dc f w)))
-  (define ascents
-    (for/list ([thing (in-list line)])
-      (match-define (list x w f) thing)
-      (get-font-ascent dc f w)))
-  ;;(displayln ascents)
-  ;;(displayln descents)
-  (define max-descent (apply max descents))
-  (define max-ascent (apply max ascents))
-  (define baseline (+ y (* 1.25 max-ascent)))
-  (define (loop line buf ascents)
-    (match line
-      ['() (list (+ baseline (* max-descent 1.25)) buf)]
-      [(list (list x w f) tail ...)
-       (define new-y (- baseline (first ascents)))
-       (loop tail (cons (list x new-y w f) buf) (rest ascents))]))
-  #;(for ([think (in-list (reverse (first (loop (reverse line) buf))))])
-    (printf "~a " (third think)))
-  #;(printf "\n---\n")
-  (loop (reverse line) buf (reverse ascents))]))
+  (cond
+    [(empty? line)
+     (list y buf)]
+    [else 
+     (define descents
+       (for/list ([thing (in-list line)])
+         (match-define (list x w f) thing)
+         (get-font-descent dc f w)))
+     (define ascents
+       (for/list ([thing (in-list line)])
+         (match-define (list x w f) thing)
+         (get-font-ascent dc f w)))
+     (define max-descent (apply max descents))
+     (define max-ascent (apply max ascents))
+     (define baseline (+ y (* 1.25 max-ascent)))
+     (define (loop line buf ascents)
+       (match line
+         ['() (list (+ baseline (* max-descent 1.25)) buf)]
+         [(list (list x w f) tail ...)
+          (define new-y (- baseline (first ascents)))
+          (loop tail (cons (list x new-y w f) buf) (rest ascents))]))
+     (loop (reverse line) buf (reverse ascents))]))
 
-(define (text->dlist dc ln buf dlist text x y ffam fsize fweight fstyle)
+;; text->dlist: DrawingCtxt * Line * DrawBuffer * String * Number * Number * [Font ...]
+;;           -> Line * DrawBuffer * Number * Number
+(define (text->dlist dc ln buf text x y ffam fsize fweight fstyle)
   (define font (make-font #:size fsize
                           #:family ffam
                           #:style fstyle
@@ -95,13 +104,11 @@
   (let loop ([words (string-split text)]
              [cursor-x x]
              [cursor-y y]
-             [display-list dlist]
              [line ln]
              [buffer buf])
     (if (empty? words)
-        (list line buffer display-list cursor-x cursor-y)
+        (list line buffer cursor-x cursor-y)
         (let* ([word (first words)]
-               [new-dlist (cons (list cursor-x cursor-y word font) display-list)]
                [new-line (cons (list cursor-x word font) line)]
                [w (get-font-width dc font word)]
                [new-x (+ cursor-x w (get-font-width dc font " "))]
@@ -109,15 +116,16 @@
           (cond
             [(> (+ cursor-x w) (- (*width*) (* 5 HSTEP)))
              (match-define (list ny nbuffer) (flush new-line buffer cursor-y dc))
-             (loop (rest words) HSTEP ny new-dlist '() nbuffer)]
-            [else (loop (rest words) new-x cursor-y new-dlist new-line buffer)])))))
+             (loop (rest words) HSTEP ny '() nbuffer)]
+            [else (loop (rest words) new-x cursor-y new-line buffer)])))))
 
+;; text->dlist: Number * Number * Line * DrawBuffer * [Font ...]
+;;           -> Void
 (define (layout-new dc tokens)
-  (define (loop tokens x y line buf dlist ffam fsize fweight fstyle ignore?)
+  (define (loop tokens x y line buf ffam fsize fweight fstyle ignore?)
     (cond
       [(empty? tokens)
        (match-define (list ny nbuffer) (flush line buf y dc))
-       (*display-list* (reverse dlist))
        (*buffer* nbuffer)]
       [else
        (define token (first tokens))
@@ -126,62 +134,63 @@
        (cond
          [(and (equal? (first token) 'tag)
                (string-prefix? (second token) "style"))
-          (loop ts x y line buf dlist ffam fsize fweight fstyle #t)]
+          (loop ts x y line buf ffam fsize fweight fstyle #t)]
          [(and (equal? (first token) 'tag)
                (string-prefix? (second token) "/style"))
-          (loop ts x y line buf dlist ffam fsize fweight fstyle #f)]
+          (loop ts x y line buf ffam fsize fweight fstyle #f)]
          [ignore?
-          (loop ts x y line buf dlist ffam fsize fweight fstyle ignore?)]
+          (loop ts x y line buf ffam fsize fweight fstyle ignore?)]
          [(equal? (first token) 'text)
-          (match-define (list n-line nbuffer n-dlist nx ny)
-            (text->dlist dc line buf dlist (second token) x y ffam fsize fweight fstyle))
-          (loop ts nx ny n-line nbuffer n-dlist ffam fsize fweight fstyle ignore?)]
+          (match-define (list n-line nbuffer nx ny)
+            (text->dlist dc line buf (second token) x y ffam fsize fweight fstyle))
+          (loop ts nx ny n-line nbuffer ffam fsize fweight fstyle ignore?)]
          [(equal? (second token) "i")
-          (loop ts x y line buf dlist ffam fsize fweight 'italic ignore?)]
+          (loop ts x y line buf ffam fsize fweight 'italic ignore?)]
          [(equal? (second token) "/i")
-          (loop ts x y line buf dlist ffam fsize fweight 'normal ignore?)]
+          (loop ts x y line buf ffam fsize fweight 'normal ignore?)]
          [(equal? (second token) "b")
-          (loop ts x y line buf dlist ffam fsize 'bold fstyle ignore?)]
+          (loop ts x y line buf ffam fsize 'bold fstyle ignore?)]
          [(equal? (second token) "/b")
-          (loop ts x y line buf dlist ffam fsize 'normal fstyle ignore?)]
+          (loop ts x y line buf ffam fsize 'normal fstyle ignore?)]
          [(equal? (second token) "big")
-          (loop ts x y line buf dlist ffam (+ fsize 4) fweight fstyle ignore?)]
+          (loop ts x y line buf ffam (+ fsize 4) fweight fstyle ignore?)]
          [(equal? (second token) "/big")
-          (loop ts x y line buf dlist ffam (- fsize 4) fweight fstyle ignore?)]
+          (loop ts x y line buf ffam (- fsize 4) fweight fstyle ignore?)]
          [(equal? (second token) "small")
-          (loop ts x y line buf dlist ffam (- fsize 2) fweight fstyle ignore?)]
+          (loop ts x y line buf ffam (- fsize 2) fweight fstyle ignore?)]
          [(equal? (second token) "/small")
-          (loop ts x y line buf dlist ffam (- fsize 2) fweight fstyle ignore?)]
+          (loop ts x y line buf ffam (- fsize 2) fweight fstyle ignore?)]
          [(equal? (second token) "/p")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer dlist ffam fsize fweight fstyle ignore?)]
-         [(equal? (second token) "pre")
-          (loop ts x y line buf dlist 'modern fsize fweight fstyle ignore?)]
+          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer ffam fsize fweight fstyle ignore?)]
+         [(string-prefix? (second token) "pre")
+          (loop ts x y line buf 'modern fsize fweight fstyle ignore?)]
          [(equal? (second token) "/pre")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer dlist 'default fsize fweight fstyle ignore?)]
+          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer 'default fsize fweight fstyle ignore?)]
          [(equal? (second token) "br")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP ny '() nbuffer dlist ffam fsize fweight fstyle ignore?)]
+          (loop ts HSTEP ny '() nbuffer ffam fsize fweight fstyle ignore?)]
          [(string-prefix? (second token) "h1")
-          (loop ts HSTEP y '() buf dlist ffam (+ fsize 6) fweight fstyle ignore?)]
+          (loop ts HSTEP y '() buf ffam (+ fsize 6) fweight fstyle ignore?)]
          [(equal? (second token) "/h1")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP ny '() nbuffer dlist ffam (- fsize 6) fweight fstyle ignore?)]
+          (loop ts HSTEP ny '() nbuffer ffam (- fsize 6) fweight fstyle ignore?)]
          [(string-prefix? (second token) "h2")
-          (loop ts HSTEP y '() buf dlist ffam (+ fsize 4) fweight fstyle ignore?)]
+          (loop ts HSTEP y '() buf ffam (+ fsize 4) fweight fstyle ignore?)]
          [(equal? (second token) "/h2")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP ny '() nbuffer dlist ffam (- fsize 4) fweight fstyle ignore?)]
+          (loop ts HSTEP ny '() nbuffer ffam (- fsize 4) fweight fstyle ignore?)]
          [(equal? (second token) "/li")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP ny '() nbuffer dlist ffam fsize fweight fstyle ignore?)]
+          (loop ts HSTEP ny '() nbuffer ffam fsize fweight fstyle ignore?)]
          [(equal? (second token) "/ul")
           (match-define (list ny nbuffer) (flush line buf y dc))
-          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer dlist ffam fsize fweight fstyle ignore?)]
-         [else (loop ts x y line buf dlist ffam fsize fweight fstyle ignore?)])])
-    )
-  (loop tokens HSTEP VSTEP '() '() '() 'default 16 'normal 'normal #f))
+          (loop ts HSTEP (+ ny (* 2 VSTEP)) '() nbuffer ffam fsize fweight fstyle ignore?)]
+         [else (loop ts x y line buf ffam fsize fweight fstyle ignore?)])]))
+  (loop tokens HSTEP VSTEP '() '() 'default 16 'normal 'normal #f))
+
+;;- Font Functions -------------------------------------------------------------
 
 (define (get-font-size dc)
   (define font (send dc get-font))
@@ -203,9 +212,9 @@
   (send dc set-font font)
   (define-values (width height descent ascent)
     (send dc get-text-extent word))
-  ;;(printf "~a ~a\n" height descent)
   (identity (- height descent)))
 
+;;- Drawing Functions ----------------------------------------------------------
 
 (define (draw-page dc)
   (send dc clear)
@@ -216,25 +225,7 @@
                 (< (+ y VSTEP) (*scroll*)))
       (send dc draw-text c x (- y (*scroll*))))))
 
-#;(define (lex-tags body)
-  (define (lex-helper chars buffer in-tag result)
-    (cond
-      [(empty? chars)
-       (if (and (not in-tag) (not (string=? buffer "")))
-           (append result (list (list 'text buffer)))
-           result)]
-      [(char=? (first chars) #\<)
-       (if (not (string=? buffer ""))
-           (lex-helper (cdr chars) "" #t (append result (list (list 'text buffer))))
-           (lex-helper (cdr chars) "" #t result))]
-      [(char=? (first chars) #\>)
-       (if (not (string=? buffer ""))
-           (lex-helper (rest chars) "" #f (append result (list (list 'tag buffer))))
-           (lex-helper (rest chars) "" #f result))]
-      [else
-       (lex-helper (rest chars) (string-append buffer (string (first chars))) in-tag result)]))
-  
-  (lex-helper (string->list body) "" #f '()))
+;;- HTML Parser ----------------------------------------------------------------
 
 (define (lex-tags body)
   (define (lex-helper chars buffer in-tag in-pre result)
@@ -286,11 +277,13 @@
       (string-replace _ "&#91;" "[")
       (string-replace _ "&#93;" "]")))
 
+;;- Main Loop ------------------------------------------------------------------
+
 (define (enter-url dc url)
   (*url* url)
   (define res (get url))
   (*scroll* 0)
-  (*display-list* '())
+  (*buffer* '())
 
   (define page
     (~> res
