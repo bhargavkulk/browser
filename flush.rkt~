@@ -85,13 +85,13 @@
        (define ts (rest tokens))
        (define font (list fsize fweight fstyle))
        (cond
-         #;[(and (equal? (first token) 'tag)
+         [(and (equal? (first token) 'tag)
                (equal? (second token) "/script"))
           (loop ts x y dlist fsize fweight fstyle #f)]
-         #;[(and (equal? (first token) 'tag)
+         [(and (equal? (first token) 'tag)
                (string-contains? (second token) "script"))
           (loop ts x y dlist fsize fweight fstyle #t)]
-         #;[ignore? (loop ts x y dlist fsize fweight fstyle ignore?)]
+         [ignore? (loop ts x y dlist fsize fweight fstyle ignore?)]
          [(equal? (first token) 'text)
           (match-define (list n-dlist nx ny)
             (text->dlist dc dlist (second token) x y fsize fweight fstyle))
@@ -104,22 +104,22 @@
           (loop ts x y dlist fsize 'bold fstyle ignore?)]
          [(equal? (second token) "/b")
           (loop ts x y dlist fsize 'normal fstyle ignore?)]
-         #;[(equal? (second token) "/p")
+         [(equal? (second token) "/p")
           (define ny (+ y (* (get-font-size dc) 1.25) (* 2 VSTEP)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
-         #;[(equal? (second token) "/pre")
+         [(equal? (second token) "/pre")
           (define ny (+ y (* (get-font-size dc) 1.25) (* 2 VSTEP)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
-         #;[(equal? (second token) "br")
+         [(equal? (second token) "br")
           (define ny (+ y (* (get-font-size dc) 1.25)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
-         #;[(equal? (second token) "/h1")
+         [(equal? (second token) "/h1")
           (define ny (+ y (* (get-font-size dc) 1.25)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
-         #;[(equal? (second token) "/li")
+         [(equal? (second token) "/li")
           (define ny (+ y (* (get-font-size dc) 1.25)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
-         #;[(equal? (second token) "/ul")
+         [(equal? (second token) "/ul")
           (define ny (+ y (* (get-font-size dc) 1.25) (* 2 VSTEP)))
           (loop ts HSTEP ny dlist fsize fweight fstyle ignore?)]
          [else (loop ts x y dlist fsize fweight fstyle ignore?)])]))
