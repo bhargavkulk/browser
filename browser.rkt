@@ -269,13 +269,13 @@
 
 (define (escape text)
   (~> text
-      (string-replace _ "&lt;" "<")
-      (string-replace _ "&gt;" ">")
+      (string-replace _ "&lt;"   "<")
+      (string-replace _ "&gt;"   ">")
       (string-replace _ "&quot;" "\"")
-      (string-replace _ "&#39;" "'")
+      (string-replace _ "&#39;"  "'")
       (string-replace _ "&nbsp;" " ")
-      (string-replace _ "&#91;" "[")
-      (string-replace _ "&#93;" "]")))
+      (string-replace _ "&#91;"  "[")
+      (string-replace _ "&#93;"  "]")))
 
 ;;- Main Loop ------------------------------------------------------------------
 
